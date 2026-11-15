@@ -1,0 +1,74 @@
+name: Build and deploy to Codeberg Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ forgejo.workflow }}-${{ forgejo.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_and_deploy:
+    name: Build and deploy
+    runs-on: codeberg-small
+    env:
+      GO_VERSION: 1.27.4
+      HUGO_VERSION: 0.170.0
+      TZ: Asia/Almaty
+      HUGO_BASEURL: https://${{ forgejo.event.repository.owner.username }}.codeberg.page/
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          lfs: false
+
+      - name: Create local tools directory
+        run: mkdir -p "${HOME}/.local"
+
+      - name: Install Go (for Hugo Modules)
+        run: |
+          if [[ -f "go.mod" ]]; then
+            curl -sfL --output-dir "${{ runner.temp }}" -O "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+            tar -C "${HOME}/.local" -xf "${{ runner.temp }}/go${GO_VERSION}.linux-amd64.tar.gz"
+            echo "${HOME}/.local/go/bin" >> "${FORGEJO_PATH}"
+          fi
+
+      - name: Install Hugo
+        run: |
+          curl -sfL --output-dir "${{ runner.temp }}" -O "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_${HUGO_VERSION}_linux-amd64.tar.gz"
+          mkdir -p "${HOME}/.local/hugo"
+          tar -C "${HOME}/.local/hugo" -xf "${{ runner.temp }}/hugo_${HUGO_VERSION}_linux-amd64.tar.gz"
+          echo "${HOME}/.local/hugo" >> "${FORGEJO_PATH}"
+
+      - name: Cache restore
+        id: cache-restore
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/.cache/hugo
+          key: hugo-${{ forgejo.run_id }}
+          restore-keys: hugo-
+
+      - name: Build
+        run: |
+          hugo build \
+            --gc \
+            --minify \
+            --cacheDir "${{ runner.temp }}/.cache/hugo"
+
+      - name: Cache save
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/.cache/hugo
+          key: ${{ steps.cache-restore.outputs.cache-primary-key }}
+
+      - name: Deploy
+        uses: https://codeberg.org/git-pages/action@v2
+        with:
+          site: ${{ env.HUGO_BASEURL }}
+          token: ${{ forge.token }}
+          source: public/
