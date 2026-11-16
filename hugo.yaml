@@ -19,6 +19,19 @@ caches:
 
 params:
   defaultTheme: auto
+  # Иконки сайта (лежат в static/, исходник — ~/Pictures/UI/soaring_ore.png)
+  assets:
+    favicon: "favicon.ico"
+    favicon16x16: "favicon-16x16.png"
+    favicon32x32: "favicon-32x32.png"
+    apple_touch_icon: "apple-touch-icon.png"
+    safari_pinned_tab: "safari-pinned-tab.svg"
+    theme_color: "#233021"
+    msapplication_TileColor: "#233021"
+  # Логотип рядом с названием блога в шапке
+  label:
+    icon: "images/logo.png"
+    iconHeight: 30
   displayFullLangName: true
   ShowReadingTime: true
   ShowShareButtons: false

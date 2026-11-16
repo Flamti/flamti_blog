@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -20,7 +21,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
                                QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
                                QMessageBox, QPlainTextEdit, QPushButton, QRadioButton,
-                               QScrollArea, QSizePolicy, QSlider, QSplitter, QStyle, QToolBar, QToolButton,
+                               QScrollArea, QSizePolicy, QSlider, QSplitter, QStyle, QTabWidget, QToolBar,
+                               QToolButton,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -36,8 +38,51 @@ def icon(name: str, fallback=QStyle.StandardPixmap.SP_FileIcon) -> QIcon:
     return ic if not ic.isNull() else QApplication.style().standardIcon(fallback)
 
 
+def open_url(url: str):
+    """Открывает ссылку/файл через xdg-open (QDesktopServices под Wayland иногда молча ничего не делает)."""
+    ok, _pid = QProcess.startDetached("xdg-open", [url])
+    if not ok:
+        QDesktopServices.openUrl(QUrl(url))
+
+
 def open_in_obsidian(path: Path):
-    QDesktopServices.openUrl(QUrl("obsidian://open?path=" + urllib.parse.quote(str(path), safe="")))
+    open_url("obsidian://open?path=" + urllib.parse.quote(str(path), safe=""))
+
+
+def mime_payload(md, for_editor=False):
+    """Извлекает из перетаскивания/буфера картинки: ('files', [Path]) | ('image', QImage) | ('remote', [url])."""
+    if md is None:
+        return None
+    if md.hasUrls():
+        local = [Path(u.toLocalFile()) for u in md.urls() if u.isLocalFile()]
+        imgs = [p for p in local if p.suffix.lower() in core.IMAGE_EXTS]
+        if imgs:
+            return ("files", imgs)
+    if md.hasImage() and not (for_editor and md.hasText() and not md.hasUrls()):
+        img = QImage(md.imageData())
+        if not img.isNull():
+            return ("image", img)
+    if md.hasUrls():
+        remote = [u.toString() for u in md.urls() if u.scheme() in ("http", "https")
+                  and Path(u.path()).suffix.lower() in core.IMAGE_EXTS]
+        if remote:
+            return ("remote", remote)
+    return None
+
+
+class BodyEdit(QPlainTextEdit):
+    """Поле текста поста: картинки, вставленные/перетащенные сюда, попадают в позицию курсора."""
+    media = Signal(object)
+
+    def canInsertFromMimeData(self, md):
+        return mime_payload(md, True) is not None or super().canInsertFromMimeData(md)
+
+    def insertFromMimeData(self, md):
+        payload = mime_payload(md, True)
+        if payload:
+            QTimer.singleShot(0, lambda: self.media.emit(payload))
+            return
+        super().insertFromMimeData(md)
 
 
 # ======================================================================= фон
@@ -96,8 +141,8 @@ class NewPostDialog(QDialog):
         self.note_hint.setStyleSheet("color: gray")
         lay.addWidget(self.note_hint)
 
-        self.open_obs = QCheckBox("Сразу открыть в Obsidian")
-        self.open_obs.setChecked(True)
+        self.open_obs = QCheckBox("Сразу открыть в Obsidian (иначе пишите прямо здесь)")
+        self.open_obs.setChecked(QSettings("blog-studio", "blog-studio").value("open_obsidian", "false") in (True, "true"))
         lay.addWidget(self.open_obs)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -181,7 +226,7 @@ class PublishDialog(QDialog):
         btns = QHBoxLayout()
         self.open_btn = QPushButton(icon("internet-web-browser"), "Открыть на сайте")
         self.open_btn.setVisible(False)
-        self.open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.live_url)))
+        self.open_btn.clicked.connect(lambda: open_url(self.live_url))
         btns.addWidget(self.open_btn)
         btns.addStretch()
         self.go = QPushButton(icon("document-send"), "Снять с публикации" if unpublish else "Опубликовать")
@@ -287,8 +332,32 @@ class PublishDialog(QDialog):
 
 # ======================================================================= картинки
 
+class DropSplitter(QSplitter):
+    """Центральная область окна: картинку можно бросить куда угодно."""
+    dropped = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, e):
+        if mime_payload(e.mimeData()):
+            e.setDropAction(Qt.DropAction.CopyAction)
+            e.accept()
+
+    def dragMoveEvent(self, e):
+        e.setDropAction(Qt.DropAction.CopyAction)
+        e.accept()
+
+    def dropEvent(self, e):
+        payload = mime_payload(e.mimeData())
+        e.setDropAction(Qt.DropAction.CopyAction)
+        e.accept()
+        QTimer.singleShot(0, lambda: self.dropped.emit(payload))
+
+
 class ImageList(QListWidget):
-    files_dropped = Signal(list)
+    files_dropped = Signal(object)
 
     def __init__(self):
         super().__init__()
@@ -300,6 +369,7 @@ class ImageList(QListWidget):
         self.setWordWrap(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DropOnly)
         self.setMinimumHeight(190)
         self.placeholder = "Перетащите сюда картинки или нажмите Ctrl+V"
@@ -314,14 +384,18 @@ class ImageList(QListWidget):
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls() or e.mimeData().hasImage():
-            e.acceptProposedAction()
+            e.setDropAction(Qt.DropAction.CopyAction)
+            e.accept()
 
     def dragMoveEvent(self, e):
-        e.acceptProposedAction()
+        e.setDropAction(Qt.DropAction.CopyAction)
+        e.accept()
 
     def dropEvent(self, e):
-        self.files_dropped.emit([e.mimeData()])
-        e.acceptProposedAction()
+        payload = mime_payload(e.mimeData())  # данные нужно забрать до конца события
+        e.setDropAction(Qt.DropAction.CopyAction)
+        e.accept()
+        QTimer.singleShot(0, lambda: self.files_dropped.emit(payload))
 
 
 _thumb_cache: dict[tuple, QIcon] = {}
@@ -406,7 +480,7 @@ class MainWindow(QMainWindow):
         a.triggered.connect(self.refresh)
         tb.addAction(a)
         a = QAction(icon("internet-web-browser"), "Сайт", self)
-        a.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(core.site_url(REPO))))
+        a.triggered.connect(lambda: open_url(core.site_url(REPO)))
         tb.addAction(a)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -425,7 +499,8 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.hugo_stop)
 
     def build_ui(self):
-        self.splitter = QSplitter()
+        self.splitter = DropSplitter()
+        self.splitter.dropped.connect(lambda payload: self.handle_media(payload))
         self.setCentralWidget(self.splitter)
 
         # ---- слева: список постов
@@ -487,7 +562,7 @@ class MainWindow(QMainWindow):
             actions.addWidget(b)
             self.obs_btns[l] = b
         b = QPushButton(icon("folder-open", QStyle.StandardPixmap.SP_DirOpenIcon), "Папка")
-        b.clicked.connect(lambda: self.current and QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.current.dir))))
+        b.clicked.connect(lambda: self.current and open_url(str(self.current.dir)))
         actions.addWidget(b)
         actions.addStretch()
         self.preview_btn = QPushButton(icon("document-preview", QStyle.StandardPixmap.SP_FileDialogContentsView), "Предпросмотр")
@@ -502,8 +577,7 @@ class MainWindow(QMainWindow):
         more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         m = QMenu(more)
         m.addAction("Копировать ссылку на пост", self.copy_post_url)
-        m.addAction("Открыть на сайте", lambda: self.current and QDesktopServices.openUrl(
-            QUrl(core.post_url(core.site_url(REPO), self.current.slug))))
+        m.addAction("Открыть на сайте", lambda: self.current and open_url(core.post_url(core.site_url(REPO), self.current.slug)))
         m.addSeparator()
         self.unpublish_act = m.addAction("Снять с публикации…", lambda: self.publish(True))
         self.delete_act = m.addAction(icon("edit-delete"), "Удалить черновик…", self.delete_post)
@@ -511,26 +585,43 @@ class MainWindow(QMainWindow):
         actions.addWidget(more)
         dl.addLayout(actions)
 
-        # метаданные
-        meta = QGroupBox("Заголовки и теги")
-        g = QGridLayout(meta)
-        g.addWidget(QLabel("<b>Заголовок</b>"), 0, 1)
-        g.addWidget(QLabel("<b>Теги</b> (через запятую)"), 0, 2)
-        self.title_edits, self.tag_edits, self.lang_marks = {}, {}, {}
-        for r, l in enumerate(core.LANGS, start=1):
-            mark = QLabel()
-            self.lang_marks[l] = mark
-            g.addWidget(mark, r, 0)
+        # текст по языкам
+        self.lang_tabs = QTabWidget()
+        self.title_edits, self.tag_edits, self.body_edits, self.word_lbls = {}, {}, {}, {}
+        self.saved_body: dict[str, str] = {}
+        self.body_timers = {}
+        for l in core.LANGS:
+            page = QWidget()
+            pl = QVBoxLayout(page)
+            form = QFormLayout()
             te = QLineEdit()
+            te.setPlaceholderText("Заголовок")
             te.editingFinished.connect(lambda l=l: self.save_meta(l))
             ge = QLineEdit()
+            ge.setPlaceholderText("через запятую")
             ge.editingFinished.connect(lambda l=l: self.save_meta(l))
-            self.title_edits[l], self.tag_edits[l] = te, ge
-            g.addWidget(te, r, 1)
-            g.addWidget(ge, r, 2)
-        g.setColumnStretch(1, 3)
-        g.setColumnStretch(2, 2)
-        dl.addWidget(meta)
+            form.addRow("Заголовок:", te)
+            form.addRow("Теги:", ge)
+            pl.addLayout(form)
+            be = BodyEdit()
+            be.setPlaceholderText({"ru": "Текст поста (Markdown)… Картинки можно вставлять сюда через Ctrl+V или перетаскиванием.",
+                                   "en": "Post text (Markdown)…", "es": "Texto (Markdown)…"}[l])
+            be.setMinimumHeight(300)
+            bf = be.font()
+            bf.setPointSizeF(bf.pointSizeF() * 1.1)
+            be.setFont(bf)
+            be.textChanged.connect(lambda l=l: self.on_body_changed(l))
+            be.media.connect(lambda payload, l=l: self.handle_media(payload, l))
+            pl.addWidget(be, 1)
+            wl = QLabel()
+            wl.setStyleSheet("color: gray")
+            pl.addWidget(wl)
+            t = QTimer(self, singleShot=True, interval=700)
+            t.timeout.connect(lambda l=l: self.save_body(l))
+            self.title_edits[l], self.tag_edits[l], self.body_edits[l], self.word_lbls[l] = te, ge, be, wl
+            self.body_timers[l] = t
+            self.lang_tabs.addTab(page, l.upper())
+        dl.addWidget(self.lang_tabs, 3)
 
         # картинки
         imgs = QGroupBox("Картинки")
@@ -554,9 +645,10 @@ class MainWindow(QMainWindow):
         self.max_side.currentIndexChanged.connect(lambda: self.settings.setValue("max_side", self.max_side.currentData()))
         opts.addWidget(self.max_side)
         opts.addSpacing(16)
-        self.add_links = QCheckBox("Добавлять ссылку в конец всех языков")
+        self.add_links = QCheckBox("Добавлять ссылку во все языки")
         self.add_links.setChecked(self.settings.value("add_links", "true") in (True, "true"))
-        self.add_links.setToolTip("Иначе Markdown-ссылка только копируется в буфер — вставьте её в Obsidian сами")
+        self.add_links.setToolTip("При вставке в текст: в текущий язык — у курсора, в остальные — в конец.\n"
+                                  "Без галочки ссылка попадает только туда, куда вставили (или в буфер).")
         self.add_links.toggled.connect(lambda v: self.settings.setValue("add_links", v))
         opts.addWidget(self.add_links)
         opts.addStretch()
@@ -564,11 +656,10 @@ class MainWindow(QMainWindow):
         self.on_quality(self.quality.value())
 
         self.images = ImageList()
-        self.images.files_dropped.connect(lambda mds: [self.add_from_mime(m) for m in mds])
+        self.images.files_dropped.connect(lambda payload: self.handle_media(payload))
         self.images.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.images.customContextMenuRequested.connect(self.image_menu)
-        self.images.itemDoubleClicked.connect(lambda it: QDesktopServices.openUrl(
-            QUrl.fromLocalFile(str(self.current.dir / it.data(Qt.ItemDataRole.UserRole)))))
+        self.images.itemDoubleClicked.connect(lambda it: open_url(str(self.current.dir / it.data(Qt.ItemDataRole.UserRole))))
         il.addWidget(self.images)
         ib = QHBoxLayout()
         b = QPushButton(icon("list-add"), "Добавить файлы…")
@@ -678,6 +769,8 @@ class MainWindow(QMainWindow):
         slug = it.data(0, Qt.ItemDataRole.UserRole)
         post = next((p for p in self.posts if p.slug == slug), None)
         if post:
+            if self.current and self.current.slug != slug:
+                self.flush_bodies()
             self.settings.setValue("last_post", slug)
             self.current = post
             self.load_post(post)
@@ -695,23 +788,105 @@ class MainWindow(QMainWindow):
         self.h_title.setText(p.title() or p.slug)
         url = core.post_url(core.site_url(REPO), p.slug)
         self.h_sub.setText(f"{core.KINDS[p.kind]} · {self.status_of(p)} · {p.date[:16].replace('T', ' ')} · {url}")
-        for l in core.LANGS:
+        switched = getattr(self, "_loaded_slug", None) != p.slug
+        self._loaded_slug = p.slug
+        for i, l in enumerate(core.LANGS):
             lf = p.langs[l]
-            self.lang_marks[l].setText(("✅ " if lf.complete else "✏️ ") + l.upper())
-            self.lang_marks[l].setToolTip("Заголовок и текст заполнены" if lf.complete else "Не заполнен заголовок или текст")
+            self.lang_tabs.setTabText(i, ("✅ " if lf.complete else "✏️ ") + l.upper())
+            self.lang_tabs.setTabToolTip(i, "Заголовок и текст заполнены" if lf.complete else "Не заполнен заголовок или текст")
+            self.load_body(l, lf, switched)
             for edit, val in ((self.title_edits[l], lf.title), (self.tag_edits[l], ", ".join(lf.tags))):
                 if keep_edits and edit.hasFocus():
                     continue
                 if edit.text() != val:
                     edit.setText(val)
-            self.title_edits[l].setPlaceholderText("" if lf.exists else "файла нет")
+            self.title_edits[l].setPlaceholderText("Заголовок" if lf.exists else "файла нет")
+            for w in (self.title_edits[l], self.tag_edits[l], self.body_edits[l]):
+                w.setEnabled(lf.exists)
         self.unpublish_act.setEnabled(not p.draft)
         self.delete_act.setEnabled(p.draft)
         self.publish_btn.setText("Опубликовать" if p.draft else "Отправить правки")
         self.fill_images(p)
         self.fill_issues(p)
 
+    @staticmethod
+    def norm_body(body: str) -> str:
+        return "" if body.strip() in core.TEMPLATE_BODIES else body.strip("\n")
+
+    def load_body(self, l, lf, switched):
+        be = self.body_edits[l]
+        text = self.norm_body(lf.body)
+        dirty = not switched and be.toPlainText() != self.saved_body.get(l, "")
+        if not dirty and be.toPlainText() != text:
+            pos = be.textCursor().position()
+            be.blockSignals(True)
+            be.setPlainText(text)
+            be.blockSignals(False)
+            if not switched:
+                c = be.textCursor()
+                c.setPosition(min(pos, len(text)))
+                be.setTextCursor(c)
+        if not dirty:
+            self.saved_body[l] = text
+        self.update_words(l)
+
+    def update_words(self, l):
+        t = self.body_edits[l].toPlainText()
+        self.word_lbls[l].setText(f"{len(t.split())} слов · {len(t)} знаков · сохраняется автоматически")
+
+    def on_body_changed(self, l):
+        self.update_words(l)
+        self.body_timers[l].start()
+
+    def save_body(self, l):
+        self.body_timers[l].stop()
+        p = self.current
+        if not p or getattr(self, "_loaded_slug", None) != p.slug:
+            return
+        text = self.body_edits[l].toPlainText()
+        if text == self.saved_body.get(l):
+            return
+        lf = p.langs[l].load()
+        if not lf.exists:
+            return
+        lf.body = "\n" + text.strip("\n") + "\n" if text.strip() else "\n"
+        lf.save()
+        self.saved_body[l] = text
+        self.statusBar().showMessage(f"Сохранено: index.{l}.md", 1500)
+
+    def flush_bodies(self):
+        for l in core.LANGS:
+            self.save_body(l)
+
+    def handle_media(self, payload, lang=None):
+        """Картинки из буфера/перетаскивания. lang — поле текста, куда вставить ссылку у курсора."""
+        if not payload:
+            self.statusBar().showMessage("Не нашёл картинку в перетаскиваемых данных / буфере", 4000)
+            return
+        kind, data = payload
+        tmpdir = Path(tempfile.mkdtemp(prefix="blog-studio-"))
+        try:
+            if kind == "files":
+                self.add_paths(data, lang=lang)
+            elif kind == "image":
+                tmp = tmpdir / "img.png"
+                data.save(str(tmp), "PNG")
+                self.add_paths([tmp], ["img.png"], lang=lang)
+            elif kind == "remote":
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+                try:
+                    paths = [core.download(u, tmpdir) for u in data]
+                except Exception as e:  # noqa: BLE001
+                    QMessageBox.warning(self, "Не удалось скачать картинку", str(e))
+                    return
+                finally:
+                    QApplication.restoreOverrideCursor()
+                self.add_paths(paths, lang=lang)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
     def save_meta(self, l):
+        self.flush_bodies()
         p = self.current
         if not p or not p.langs[l].path.exists():
             return
@@ -770,8 +945,9 @@ class MainWindow(QMainWindow):
     def img_opts(self):
         return self.quality.value(), (self.max_side.currentData() or None)
 
-    def add_paths(self, paths: list[Path], display_names: list[str] | None = None):
+    def add_paths(self, paths: list[Path], display_names: list[str] | None = None, lang=None):
         p = self.current
+        self.flush_bodies()
         if not p:
             QMessageBox.information(self, "Blog Studio", "Сначала выберите или создайте пост.")
             return
@@ -791,13 +967,27 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
         if added:
             links = "\n\n".join(core.md_link(n) for n in added)
-            QGuiApplication.clipboard().setText(links)
-            if self.add_links.isChecked():
+            if lang:
+                be = self.body_edits[lang]
+                c = be.textCursor()
+                full = be.toPlainText()
+                before, after = full[:c.position()], full[c.position():]
+                prefix = "" if not before or before.endswith("\n\n") else ("\n" if before.endswith("\n") else "\n\n")
+                suffix = "" if after.startswith("\n\n") else ("\n" if after.startswith("\n") or not after else "\n\n")
+                c.insertText(prefix + links + suffix)
+                be.setTextCursor(c)
+                self.save_body(lang)
+                others = [l for l in core.LANGS if l != lang] if self.add_links.isChecked() else []
+                for n in added:
+                    p.append_image_link(n, others)
+                msg = f"вставлены в текст {lang.upper()}" + (" и в конец остальных языков" if others else "")
+            elif self.add_links.isChecked():
                 for n in added:
                     p.append_image_link(n)
                 msg = "добавлены в конец текста на всех языках"
             else:
-                msg = "ссылки скопированы — вставьте их в Obsidian (Ctrl+V)"
+                QGuiApplication.clipboard().setText(links)
+                msg = "ссылки скопированы в буфер"
             if p.kind == "article" and not p.cover:
                 p.set_cover(added[0])
                 msg += "; первая стала обложкой"
@@ -806,30 +996,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Не всё получилось", "\n".join(errors))
         self.refresh()
 
-    def add_from_mime(self, md):
-        if md.hasUrls():
-            paths = [Path(u.toLocalFile()) for u in md.urls() if u.isLocalFile()]
-            if paths:
-                self.add_paths(paths)
-                return
-        if md.hasImage():
-            img = QImage(md.imageData())
-            if not img.isNull():
-                tmp = Path(tempfile.mkstemp(suffix=".png")[1])
-                img.save(str(tmp), "PNG")
-                try:
-                    self.add_paths([tmp], ["img.png"])
-                finally:
-                    tmp.unlink(missing_ok=True)
-                return
-        self.statusBar().showMessage("В буфере нет картинки", 3000)
-
     def paste_clipboard(self):
         fw = QApplication.focusWidget()
-        if isinstance(fw, QLineEdit):
+        if isinstance(fw, (QLineEdit, QPlainTextEdit)):
             fw.paste()
             return
-        self.add_from_mime(QGuiApplication.clipboard().mimeData())
+        self.handle_media(mime_payload(QGuiApplication.clipboard().mimeData()))
 
     def add_files_dialog(self):
         files, _ = QFileDialog.getOpenFileNames(
@@ -879,6 +1051,7 @@ class MainWindow(QMainWindow):
         m.exec(self.images.mapToGlobal(pos))
 
     def img_action(self, fn):
+        self.flush_bodies()
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             fn()
@@ -933,8 +1106,12 @@ class MainWindow(QMainWindow):
         self.filter.setCurrentIndex(0)
         self.refresh()
         self.select_slug(slug)
+        self.settings.setValue("open_obsidian", d.open_obs.isChecked())
         if d.open_obs.isChecked():
             open_in_obsidian(post.langs["ru"].path)
+        else:
+            self.lang_tabs.setCurrentIndex(0)
+            self.body_edits["ru"].setFocus()
 
     def delete_post(self):
         p = self.current
@@ -956,6 +1133,7 @@ class MainWindow(QMainWindow):
     def publish(self, unpublish):
         if not self.current:
             return
+        self.flush_bodies()
         for l in core.LANGS:  # сохранить недописанные поля
             self.save_meta(l)
         PublishDialog(self, self.current.reload(), unpublish).exec()
@@ -1022,9 +1200,10 @@ class MainWindow(QMainWindow):
             return
         url = f"http://localhost:{HUGO_PORT}/ru/posts/{self.current.slug}/"
         if self.hugo and self.hugo.state() == QProcess.ProcessState.Running:
-            QDesktopServices.openUrl(QUrl(url))
+            open_url(url)
             return
         self.pending_preview = url
+        self.hugo_buf = ""
         self.hugo = QProcess(self)
         self.hugo.setWorkingDirectory(str(REPO))
         self.hugo.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -1038,13 +1217,13 @@ class MainWindow(QMainWindow):
     def hugo_output(self):
         out = bytes(self.hugo.readAllStandardOutput()).decode(errors="replace")
         self.hugo_buf = (getattr(self, "hugo_buf", "") + out)[-4000:]
-        if self.pending_preview and "Web Server is available" in out:
+        if self.pending_preview and "Web Server is available" in self.hugo_buf:
             self.hugo_label.setText(f"🟢 предпросмотр: localhost:{HUGO_PORT}")
-            QDesktopServices.openUrl(QUrl(self.pending_preview))
+            open_url(self.pending_preview)
             self.pending_preview = None
-        elif "address already in use" in out and self.pending_preview:
+        elif "address already in use" in self.hugo_buf and self.pending_preview:
             # сервер уже запущен где-то ещё — просто открываем страницу
-            QDesktopServices.openUrl(QUrl(self.pending_preview))
+            open_url(self.pending_preview)
             self.pending_preview = None
 
     def hugo_finished(self, code, _status):
@@ -1061,6 +1240,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ окно
 
+
     def event(self, e):
         from PySide6.QtCore import QEvent
         if e.type() == QEvent.Type.WindowActivate:
@@ -1068,6 +1248,7 @@ class MainWindow(QMainWindow):
         return super().event(e)
 
     def closeEvent(self, e):
+        self.flush_bodies()
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("splitter", self.splitter.saveState())
         self.stop_hugo()

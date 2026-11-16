@@ -368,9 +368,12 @@ class Post:
                 lf.fm_text = fm_set_nested(lf.fm_text, "cover", "image", new or "")
         self.update_all(f)
 
-    def append_image_link(self, name: str):
+    def append_image_link(self, name: str, langs=LANGS):
         def f(lf):
-            lf.body = lf.body.rstrip("\n") + ("\n\n" if lf.body.strip() else "\n") + md_link(name) + "\n"
+            if lf.lang not in langs:
+                return
+            body = "" if lf.body.strip() in TEMPLATE_BODIES else lf.body
+            lf.body = body.rstrip("\n") + ("\n\n" if body.strip() else "\n") + md_link(name) + "\n"
         self.update_all(f)
 
 
@@ -478,6 +481,22 @@ def nice_stem(original_name: str) -> str:
     if not s or re.match(r"^(pasted-image|screenshot|snimok-ekrana|img|image|photo|dsc|pxl|vid)[-_0-9]*", s):
         return "img"
     return s
+
+
+def download(url: str, folder: Path) -> Path:
+    """Скачивает картинку по http(s) (перетаскивание из браузера)."""
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 blog-studio"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        data = r.read(50_000_000)
+        ctype = r.headers.get_content_type()
+    ext = Path(urllib.parse.urlparse(url).path).suffix.lower()
+    if ext not in IMAGE_EXTS:
+        ext = {"image/png": ".png", "image/gif": ".gif", "image/webp": ".webp", "image/svg+xml": ".svg",
+               "image/avif": ".avif"}.get(ctype, ".jpg")
+    stem = Path(urllib.parse.unquote(urllib.parse.urlparse(url).path)).stem or "img"
+    out = folder / f"{stem[:60]}{ext}"
+    out.write_bytes(data)
+    return out
 
 
 def add_image(post: Post, src: Path, quality: int, max_side: int | None,
