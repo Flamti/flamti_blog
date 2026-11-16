@@ -4,3 +4,4 @@ resources/
 .DS_Store
 Thumbs.db
 .obsidian/
+__pycache__/

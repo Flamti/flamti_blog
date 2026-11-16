@@ -18,7 +18,10 @@ jobs:
       GO_VERSION: 1.27.4
       HUGO_VERSION: 0.170.0
       TZ: Asia/Almaty
-      HUGO_BASEURL: https://${{ forgejo.event.repository.owner.username }}.codeberg.page/
+      # Адрес Codeberg Pages, куда выкладывается сборка. Сам сайт собирается
+      # с baseURL из hugo.yaml (https://flamti.org/), поэтому HUGO_BASEURL не задаём:
+      # эта переменная перекрыла бы hugo.yaml, и все ссылки вели бы на codeberg.page.
+      PAGES_SITE: https://${{ forgejo.event.repository.owner.username }}.codeberg.page/
 
     steps:
       - name: Checkout
@@ -69,6 +72,6 @@ jobs:
       - name: Deploy
         uses: https://codeberg.org/git-pages/action@v2
         with:
-          site: ${{ env.HUGO_BASEURL }}
+          site: ${{ env.PAGES_SITE }}
           token: ${{ forge.token }}
           source: public/
