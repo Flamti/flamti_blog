@@ -23,13 +23,13 @@ Durante mucho tiempo busqué trabajo en la industria de los videojuegos para gan
 
 Durante un tiempo trabajé como freelance: realicé encargos para estudios de animación, hice visualizaciones de proyectos petroleros y modelé interiores para proyectos arquitectónicos.
 
-En 2020 salí «a la luz» por primera vez con mi propio proyecto de videojuego. Participé en el concurso de desarrollo Unreal Engine Dev Contest 2020 con el prototipo [de Soaring Islands]{https://unrealcontest.ru/2020/game/738/}
+En 2020 salí «a la luz» por primera vez con mi propio proyecto de videojuego. Participé en el concurso de desarrollo Unreal Engine Dev Contest 2020 con el prototipo [de Soaring Islands](https://unrealcontest.ru/2020/game/738/)
 
-Durante el desarrollo llevé diarios [de trabajo]{https://dtf.ru/indie/768757-postmortem-soaring-islands-heroes-of-exploration}
+Durante el desarrollo llevé diarios [de trabajo](https://dtf.ru/indie/768757-postmortem-soaring-islands-heroes-of-exploration)
 
-Sitio web [de presentación]{https://sites.google.com/view/tuosi/index-en}
+Sitio web [de presentación](https://sites.google.com/view/tuosi/index-en)
 
-Y publiqué una demo abierta [del prototipo]{https://indiecup.net/eastern-europe/participants/soaring-islands-heroes-of-exploration.html}
+Y publiqué una demo abierta [del prototipo](https://indiecup.net/eastern-europe/participants/soaring-islands-heroes-of-exploration.html)
 
 Tras el inicio de la guerra tuve que abandonar mi país. Gracias al apoyo de mis amigos pude irme y empezar mi vida desde cero en otro lugar. Al principio fui voluntario en una comunidad que ayudaba a quienes huían de la guerra.
 

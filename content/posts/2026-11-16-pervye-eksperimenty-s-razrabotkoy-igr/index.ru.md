@@ -23,13 +23,13 @@ cover:
 
 Некоторое время я работал на фрилансе, выполнял заказы для анимационных студий, делал визуализации проектов нефтяников и моделировал интерьеры для архитектурных проектов.
 
-В 2020 году я впервые вышел «в свет» с собственным игровым проектом. Я принял участие в конкурсе разработки игр [Unreal Engine Dev Contest 2020 с прототипом игры Soaring Islands]{https://unrealcontest.ru/2020/game/738/}
+В 2020 году я впервые вышел «в свет» с собственным игровым проектом. Я принял участие в конкурсе разработки игр [Unreal Engine Dev Contest 2020 с прототипом игры Soaring Islands](https://unrealcontest.ru/2020/game/738/)
 
-По ходу разработки я вел [дневники разработки]{https://dtf.ru/indie/768757-postmortem-soaring-islands-heroes-of-exploration}
+По ходу разработки я вел [дневники разработки](https://dtf.ru/indie/768757-postmortem-soaring-islands-heroes-of-exploration)
 
-Сайт [презентация]{https://sites.google.com/view/tuosi/index-en}
+Сайт [презентация](https://sites.google.com/view/tuosi/index-en)
 
-Сделал общедоступное [демо прототипа]{https://indiecup.net/eastern-europe/participants/soaring-islands-heroes-of-exploration.html}
+Сделал общедоступное [демо прототипа](https://indiecup.net/eastern-europe/participants/soaring-islands-heroes-of-exploration.html)
 
 После начала войны мне пришлось покинуть страну. Благодаря поддержке друзей я смог уехать и начать жизнь с нуля в другой стране.
 

@@ -212,6 +212,21 @@ def fm_set_nested(fm: str, parent: str, key: str, value) -> str:
 MD_IMG = re.compile(r'!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(\s+"[^"]*")?\)')
 WIKI_IMG = re.compile(r"!\[\[([^\]|#]+)(?:\|[^\]]*)?\]\]")
 
+# Ссылки, которые Markdown не распознаёт: [текст]{адрес}, [текст] (адрес), [текст](адрес с пробелом)
+_URL = r"(?:https?://|mailto:|www\.)[^\s(){}<>]+"
+BROKEN_LINK = re.compile(r"(?<!!)\[([^\[\]\n]+)\](?:\{\s*(" + _URL + r")\s*\}|[ \t]+\(\s*(" + _URL + r")\s*\)"
+                         r"|\(\s+(" + _URL + r")\s*\)|\((" + _URL + r")\s+\))")
+
+
+def fix_broken_links(text: str) -> str:
+    """[текст]{адрес} и похожие опечатки → [текст](адрес)."""
+    def repl(m):
+        url = next(g for g in m.groups()[1:] if g)
+        if url.startswith("www."):
+            url = "https://" + url
+        return f"[{m.group(1)}]({url})"
+    return BROKEN_LINK.sub(repl, text)
+
 
 def _norm_target(t: str) -> str | None:
     t = t.strip()
@@ -612,6 +627,10 @@ def check_post(post: Post) -> list[Issue]:
         if missing and name in files:
             issues.append(Issue("warning", f"«{name}» нет в: {', '.join(missing).upper()}"))
     for l, lf in post.langs.items():
+        n = len(BROKEN_LINK.findall(lf.body))
+        if n:
+            issues.append(Issue("error", f"{l.upper()}: ссылок с ошибкой — {n} (например [текст]{{адрес}} вместо "
+                                         f"[текст](адрес)), на сайте они не будут ссылками", "links"))
         if WIKI_IMG.search(lf.body):
             issues.append(Issue("error", f"{l.upper()}: вставка ![[…]] в формате Obsidian — Hugo её не покажет", "process"))
     if post.cover and post.cover not in files:

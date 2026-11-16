@@ -23,13 +23,13 @@ For a long time, I searched for a job in the games industry to gain hands-on exp
 
 For a while, I worked as a freelancer, taking on commissions for animation studios, creating visualizations for oil and gas projects, and modeling interiors for architectural firms.
 
-In 2020, I finally stepped into the spotlight with a game project of my own. I entered the Unreal Engine Dev Contest 2020 with a [prototype of Soaring Islands]{https://unrealcontest.ru/2020/game/738/}
+In 2020, I finally stepped into the spotlight with a game project of my own. I entered the Unreal Engine Dev Contest 2020 with a [prototype of Soaring Islands](https://unrealcontest.ru/2020/game/738/)
 
-Throughout development, I kept a [devlog]{https://dtf.ru/indie/768757-postmortem-soaring-islands-heroes-of-exploration}
+Throughout development, I kept a [devlog](https://dtf.ru/indie/768757-postmortem-soaring-islands-heroes-of-exploration)
 
-I also built a [showcase website]{https://sites.google.com/view/tuosi/index-en}
+I also built a [showcase website](https://sites.google.com/view/tuosi/index-en)
 
-And released a public [demo of the prototype]{https://indiecup.net/eastern-europe/participants/soaring-islands-heroes-of-exploration.html}
+And released a public [demo of the prototype](https://indiecup.net/eastern-europe/participants/soaring-islands-heroes-of-exploration.html)
 
 After the war broke out, I had to leave my country. Thanks to the support of my friends, I was able to relocate and start my life over from scratch in a new place.
 

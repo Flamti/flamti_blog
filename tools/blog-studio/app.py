@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import core  # noqa: E402
+from editor import FormatBar, MarkdownEdit  # noqa: E402
 
 REPO = Path(os.environ.get("BLOG_REPO") or Path(__file__).resolve().parents[2])
 HUGO_PORT = 1313
@@ -70,7 +71,7 @@ def mime_payload(md, for_editor=False):
     return None
 
 
-class BodyEdit(QPlainTextEdit):
+class BodyEdit(MarkdownEdit):
     """Поле текста поста: картинки, вставленные/перетащенные сюда, попадают в позицию курсора."""
     media = Signal(object)
 
@@ -588,6 +589,7 @@ class MainWindow(QMainWindow):
         # текст по языкам
         self.lang_tabs = QTabWidget()
         self.title_edits, self.tag_edits, self.body_edits, self.word_lbls = {}, {}, {}, {}
+        self.fmt_bars = {}
         self.saved_body: dict[str, str] = {}
         self.body_timers = {}
         for l in core.LANGS:
@@ -612,6 +614,10 @@ class MainWindow(QMainWindow):
             be.setFont(bf)
             be.textChanged.connect(lambda l=l: self.on_body_changed(l))
             be.media.connect(lambda payload, l=l: self.handle_media(payload, l))
+            be.image_requested.connect(lambda l=l: self.add_files_dialog(l))
+            fb = FormatBar(be)
+            self.fmt_bars[l] = fb
+            pl.addWidget(fb)
             pl.addWidget(be, 1)
             wl = QLabel()
             wl.setStyleSheet("color: gray")
@@ -687,6 +693,12 @@ class MainWindow(QMainWindow):
         self.issues.setWordWrap(True)
         self.issues.setTextFormat(Qt.TextFormat.RichText)
         cl.addWidget(self.issues)
+        self.fix_links_btn = QPushButton(icon("tools-wizard", QStyle.StandardPixmap.SP_DialogApplyButton),
+                                         "Исправить ссылки во всех языках")
+        self.fix_links_btn.setToolTip("[текст]{адрес} → [текст](адрес)")
+        self.fix_links_btn.clicked.connect(self.fix_links)
+        self.fix_links_btn.setVisible(False)
+        cl.addWidget(self.fix_links_btn, 0, Qt.AlignmentFlag.AlignLeft)
         dl.addWidget(chk)
 
         self.empty = QLabel("Выберите пост слева или создайте новый (Ctrl+N — заметка, Ctrl+Shift+N — статья)")
@@ -801,7 +813,7 @@ class MainWindow(QMainWindow):
                 if edit.text() != val:
                     edit.setText(val)
             self.title_edits[l].setPlaceholderText("Заголовок" if lf.exists else "файла нет")
-            for w in (self.title_edits[l], self.tag_edits[l], self.body_edits[l]):
+            for w in (self.title_edits[l], self.tag_edits[l], self.body_edits[l], self.fmt_bars[l]):
                 w.setEnabled(lf.exists)
         self.unpublish_act.setEnabled(not p.draft)
         self.delete_act.setEnabled(p.draft)
@@ -929,11 +941,27 @@ class MainWindow(QMainWindow):
 
     def fill_issues(self, p: core.Post):
         issues = core.check_post(p)
+        self.fix_links_btn.setVisible(any(i.fix == "links" for i in issues))
         if not issues:
             self.issues.setText("✅ Всё готово к публикации")
             return
         rows = [("⛔ " if i.level == "error" else "⚠️ ") + i.text.replace("<", "&lt;") for i in issues]
         self.issues.setText("<br>".join(rows))
+
+    def fix_links(self):
+        p = self.current
+        if not p:
+            return
+        self.flush_bodies()
+        for l in core.LANGS:
+            lf = p.langs[l].load()
+            if lf.exists:
+                fixed = core.fix_broken_links(lf.body)
+                if fixed != lf.body:
+                    lf.body = fixed
+                    lf.save()
+        self.statusBar().showMessage("Ссылки исправлены", 4000)
+        self.refresh()
 
     # ------------------------------------------------------------ картинки
 
@@ -1003,13 +1031,13 @@ class MainWindow(QMainWindow):
             return
         self.handle_media(mime_payload(QGuiApplication.clipboard().mimeData()))
 
-    def add_files_dialog(self):
+    def add_files_dialog(self, lang=None):
         files, _ = QFileDialog.getOpenFileNames(
             self, "Добавить картинки", str(self.settings.value("last_img_dir", Path.home() / "Pictures")),
             "Картинки (" + " ".join("*" + e for e in sorted(core.IMAGE_EXTS)) + ")")
         if files:
             self.settings.setValue("last_img_dir", str(Path(files[0]).parent))
-            self.add_paths([Path(f) for f in files])
+            self.add_paths([Path(f) for f in files], lang=lang)
 
     def selected_images(self) -> list[str]:
         return [i.data(Qt.ItemDataRole.UserRole) for i in self.images.selectedItems()]
